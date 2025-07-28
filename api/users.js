@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { User, Poll, Ballot, UserFollow } = require("../database");
+const { authenticateJWT } = require("../auth");
 
 //get all users
 router.get("/", async (req, res) => {
@@ -96,7 +97,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", authenticateJWT, async (req, res) => {
   try {
     const userId = req.params.id;
     const { username, email, bio, imageUrl } = req.body;
@@ -108,30 +109,48 @@ router.patch("/:id", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
     
-    if (username && username !== user.username) {
+    if (req.user.id !== parseInt(userId) && req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Unauthorized to update this profile" });
+    }
+    
+    const updatedData = {};
+    
+    if (username !== undefined) {
+      const trimmedUsername = username.trim();
+      if (trimmedUsername.length < 3) {
+        return res.status(400).json({ error: "Username must be at least 3 characters long" });
+      }
+
       const existingUser = await User.findOne({ 
-        where: { username },
+        where: { username: trimmedUsername },
         attributes: ['id']
       });
       
       if (existingUser && existingUser.id !== parseInt(userId)) {
         return res.status(400).json({ error: "Username already taken" });
       }
+      
+      updatedData.username = trimmedUsername;
     }
     
-    const updatedData = {};
-    if (username !== undefined) updatedData.username = username.trim();
-    if (email !== undefined) updatedData.email = email.trim();
-    if (bio !== undefined) updatedData.bio = bio.trim();
-    if (imageUrl !== undefined) updatedData.imageUrl = imageUrl.trim();
+    if (email !== undefined) {
+      const trimmedEmail = email.trim();
+      updatedData.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+    
+    if (bio !== undefined) {
+      const trimmedBio = bio.trim();
+      updatedData.bio = trimmedBio === '' ? null : trimmedBio;
+    }
+    
+    if (imageUrl !== undefined) {
+      const trimmedImageUrl = imageUrl.trim();
+      updatedData.imageUrl = trimmedImageUrl === '' ? null : trimmedImageUrl;
+    }
     
     await user.update(updatedData);
-    
+
     const updatedUser = await User.findByPk(userId, {
-      include: [{
-        model: Poll,
-        include: ['PollOptions'] 
-      }],
       attributes: { exclude: ['passwordHash'] }
     });
     
@@ -142,7 +161,7 @@ router.patch("/:id", async (req, res) => {
     console.error("Error updating user:", error);
     res.status(500).json({ 
       error: "Failed to update profile",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 });

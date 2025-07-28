@@ -18,6 +18,80 @@ router.get(
   }
 );
 
+router.get(
+  '/polls',
+  authenticateJWT,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const polls = await Poll.findAll({
+        include: [
+          {
+            model: PollOption,
+            as: "PollOptions"
+          },
+          {
+            model: User,
+            as: "creator",
+            attributes: ["id", "username", "imageUrl"]
+          },
+          {
+            model: Ballot,
+            required: false
+          }
+        ],
+        order: [["createdAt", "DESC"]]
+      });
+      res.status(200).json(polls);
+    } catch (error) {
+      console.error("Error fetching polls for admin:", error);
+      res.status(500).json({ error: "Failed to fetch polls" });
+    }
+  }
+);
+
+router.patch(
+  "/polls/:id/disable",
+  authenticateJWT,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const poll = await Poll.findByPk(req.params.id, {
+        include: [
+          {
+            model: User,
+            as: "creator",
+            attributes: ["id", "username"]
+          }
+        ]
+      });
+      
+      if (!poll) {
+        return res.status(404).json({ error: "Poll not found" });
+      }
+
+      poll.isActive = !poll.isActive;
+      
+      if (!poll.isActive && !poll.endAt) {
+        poll.endAt = new Date();
+      }
+      
+      await poll.save();
+
+      res.json({
+        id: poll.id,
+        isActive: poll.isActive,
+        title: poll.title,
+        creator: poll.creator?.username,
+        message: `Poll ${poll.isActive ? 'enabled' : 'disabled'} successfully`
+      });
+    } catch (err) {
+      console.error("Error toggling poll status:", err);
+      res.status(500).json({ error: "Failed to update poll status" });
+    }
+  }
+);
+
 router.patch(
   "/polls/:id/close",
   authenticateJWT,
@@ -40,6 +114,45 @@ router.patch(
     } catch (err) {
       console.error("Error closing poll:", err);
       res.status(500).json({ error: "Failed to close poll" });
+    }
+  }
+);
+
+router.delete(
+  "/polls/:id",
+  authenticateJWT,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const poll = await Poll.findByPk(req.params.id, {
+        include: [
+          {
+            model: User,
+            as: "creator",
+            attributes: ["id", "username"]
+          }
+        ]
+      });
+      
+      if (!poll) {
+        return res.status(404).json({ error: "Poll not found" });
+      }
+
+      const pollInfo = {
+        id: poll.id,
+        title: poll.title,
+        creator: poll.creator?.username
+      };
+
+      await poll.destroy();
+      
+      res.json({
+        message: "Poll deleted successfully",
+        deletedPoll: pollInfo
+      });
+    } catch (err) {
+      console.error("Error deleting poll:", err);
+      res.status(500).json({ error: "Failed to delete poll" });
     }
   }
 );

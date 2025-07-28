@@ -8,6 +8,7 @@ const {
   BallotRanking,
   db,
 } = require("../database");
+const { requireAuth } = require("../auth");
 
     //      _______
     //     |       |
@@ -83,6 +84,52 @@ router.post("/", async (req, res) => {
   try {
     tx = await db.transaction();
 
+    const poll = await Poll.findByPk(pollId);
+    if (!poll) {
+      await tx.rollback();
+      return res.status(404).json({ error: "Poll not found" });
+    }
+
+    if (!poll.isActive) {
+      await tx.rollback();
+      return res.status(403).json({ 
+        error: "This poll has been disabled by an administrator" 
+      });
+    }
+
+    if (poll.endAt && new Date() > new Date(poll.endAt)) {
+      await tx.rollback();
+      return res.status(400).json({ error: "Poll has ended" });
+    }
+
+    if (poll.status !== "published") {
+      await tx.rollback();
+      return res.status(400).json({ error: "Cannot vote on unpublished polls" });
+    }
+
+    if (!poll.allowAnonymous && !userId) {
+      await tx.rollback();
+      return res.status(401).json({ 
+        error: "Please log in to vote on this poll" 
+      });
+    }
+
+    if (userId && !poll.allowAnonymous) {
+      const existingBallot = await Ballot.findOne({
+        where: { 
+          user_id: userId, 
+          poll_id: pollId 
+        }
+      });
+
+      if (existingBallot) {
+        await tx.rollback();
+        return res.status(400).json({ 
+          error: "You have already voted on this poll" 
+        });
+      }
+    }
+
     const ballot = await Ballot.create(
       {
         user_id: userId,
@@ -104,7 +151,10 @@ router.post("/", async (req, res) => {
       include: [{ model: BallotRanking, order: [["rank", "ASC"]] }],
     });
 
-    return res.status(201).json(result);
+    return res.status(201).json({
+      message: "Vote recorded successfully",
+      ballot: result
+    });
   } catch (err) {
     if (tx) await tx.rollback();
     console.error("Failed to create ballot:", err);

@@ -17,6 +17,7 @@ const authenticateJWT = async (req, res, next) => {
   if (!token && req.cookies && req.cookies.token) {
     token = req.cookies.token;
   }
+  //commit
   
   if (token) {
     try {
@@ -194,58 +195,39 @@ router.post("/signup", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-    
-    if (!username || !password) {
-      return res.status(400).json({ error: "Username and password are required" });
-    }
 
-    // Find user by username
     const user = await User.findOne({ where: { username } });
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-  
-    // Verify password
-    const isValidPassword = User.comparePassword(password, user.passwordHash);
-    if (!isValidPassword) {
+
+    // Check if user is disabled
+    if (user.disabled) {
+      return res.status(403).json({ error: "Account is disabled. Please contact support." });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    if (!validPassword) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    
-    // Create JWT token
+
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        username: user.username,
-        email: user.email,
-        role: user.role
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
+      { id: user.id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: "24h" }
     );
-    
-    // Set cookie (for backward compatibility)
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    });
-    
-    // Also return token in response body
+
     res.json({
-      message: "Login successful",
+      token,
       user: {
         id: user.id,
         username: user.username,
         email: user.email,
+        bio: user.bio,
         imageUrl: user.imageUrl,
         role: user.role
-      },
-      token: token
+      }
     });
-    
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Login failed" });

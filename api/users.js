@@ -3,6 +3,109 @@ const router = express.Router();
 const { User, Poll, Ballot, UserFollow } = require("../database");
 const { authenticateJWT } = require("../auth");
 
+router.post("/signup", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters long" });
+    }
+
+    if (username.length < 3 || username.length > 20) {
+      return res.status(400).json({ error: "Username must be between 3 and 20 characters" });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ where: { username } });
+    if (existingUser) {
+      return res.status(409).json({ error: "Username already exists" });
+    }
+
+    // Create new user
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await User.create({ 
+      username, 
+      passwordHash,
+      role: 'user' // Set default role
+    });
+ const token = jwt.sign(
+      {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.status(201).json({
+      message: "User created successfully",
+      token,
+      user: { 
+        id: user.id, 
+        username: user.username,
+        email: user.email,
+        bio: user.bio,
+        imageUrl: user.imageUrl,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+router.post("/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
+
+    const user = await User.findOne({ where: { username } });
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // Check if user is disabled
+    if (user.disabled) {
+      return res.status(403).json({ error: "Account is disabled. Please contact support." });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    if (!validPassword) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        bio: user.bio,
+        imageUrl: user.imageUrl,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
 //get all users
 router.get("/", async (req, res) => {
   try {

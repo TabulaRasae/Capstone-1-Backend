@@ -17,6 +17,7 @@ const authenticateJWT = async (req, res, next) => {
   if (!token && req.cookies && req.cookies.token) {
     token = req.cookies.token;
   }
+  //commit
   
   if (token) {
     try {

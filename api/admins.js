@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticateJWT, requireAdmin } = require('../auth');
 const router = express.Router();
 const { User, Poll, Ballot, PollOption } = require("../database");
+const { persistPollResult } = require("../services/pollResults");
 
 router.get(
   '/users',
@@ -77,6 +78,9 @@ router.patch(
       }
       
       await poll.save();
+      if (!poll.isActive) {
+        await persistPollResult(poll.id);
+      }
 
       res.json({
         id: poll.id,
@@ -109,6 +113,8 @@ router.patch(
       poll.isActive = false;
       if (!poll.endAt) poll.endAt = new Date();
       await poll.save();
+
+      await persistPollResult(poll.id);
 
       res.json(poll);
     } catch (err) {

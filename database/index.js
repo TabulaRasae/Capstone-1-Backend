@@ -12,40 +12,107 @@ const PollViewPermission = require("./pollViewPermission");
 const PollVotePermission = require("./pollVotePermission");
 
 // User and Poll relationships
-User.hasMany(Poll, { foreignKey: "creator_id" });
-Poll.belongsTo(User, { as: "creator", foreignKey: "creator_id" });
+User.hasMany(Poll, {
+  foreignKey: { name: "creator_id", allowNull: false },
+  onUpdate: "CASCADE",
+  onDelete: "CASCADE",
+});
+Poll.belongsTo(User, {
+  as: "creator",
+  foreignKey: { name: "creator_id", allowNull: false },
+  onUpdate: "CASCADE",
+  onDelete: "CASCADE",
+});
 
 // Poll and PollOption relationships
-Poll.hasMany(PollOption, { foreignKey: "poll_id", onDelete: "CASCADE",as: "PollOptions"});
-PollOption.belongsTo(Poll, { foreignKey: "poll_id", as: "Poll"});
+Poll.hasMany(PollOption, {
+  foreignKey: { name: "poll_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+  as: "PollOptions",
+});
+PollOption.belongsTo(Poll, {
+  foreignKey: { name: "poll_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+  as: "Poll",
+});
 
 // Poll and Ballot relationships
-Poll.hasMany(Ballot, { foreignKey: "poll_id", onDelete: "CASCADE" });
-Ballot.belongsTo(Poll, { foreignKey: "poll_id" });
+Poll.hasMany(Ballot, {
+  foreignKey: { name: "poll_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+Ballot.belongsTo(Poll, {
+  foreignKey: { name: "poll_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
 
 // User and Ballot relationships
-User.hasMany(Ballot, { foreignKey: "user_id" });
-Ballot.belongsTo(User, { foreignKey: "user_id" });
+User.hasMany(Ballot, { foreignKey: { name: "user_id", allowNull: true }, onUpdate: "CASCADE", onDelete: "SET NULL" });
+Ballot.belongsTo(User, { foreignKey: { name: "user_id", allowNull: true }, onUpdate: "CASCADE", onDelete: "SET NULL" });
 
 // Ballot and BallotRanking relationships
-Ballot.hasMany(BallotRanking, { foreignKey: "ballot_id", onDelete: "CASCADE" });
-BallotRanking.belongsTo(Ballot, { foreignKey: "ballot_id" });
+Ballot.hasMany(BallotRanking, {
+  foreignKey: { name: "ballot_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+BallotRanking.belongsTo(Ballot, {
+  foreignKey: { name: "ballot_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
 
 // PollOption and BallotRanking relationships
-PollOption.hasMany(BallotRanking, { foreignKey: "option_id" });
-BallotRanking.belongsTo(PollOption, { foreignKey: "option_id" });
+PollOption.hasMany(BallotRanking, {
+  foreignKey: { name: "option_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+BallotRanking.belongsTo(PollOption, {
+  foreignKey: { name: "option_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
 
 // Poll and PollResult relationships
-Poll.hasOne(PollResult, { foreignKey: "poll_id", onDelete: "CASCADE" });
-PollResult.belongsTo(Poll, { foreignKey: "poll_id" });
+Poll.hasOne(PollResult, {
+  foreignKey: { name: "poll_id", allowNull: false, unique: true },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+PollResult.belongsTo(Poll, {
+  foreignKey: { name: "poll_id", allowNull: false, unique: true },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
 
 // PollOption and PollResultValue relationships
-PollOption.hasMany(PollResultValue, { foreignKey: "option_id" });
-PollResultValue.belongsTo(PollOption, { foreignKey: "option_id" });
+PollOption.hasMany(PollResultValue, {
+  foreignKey: { name: "option_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+PollResultValue.belongsTo(PollOption, {
+  foreignKey: { name: "option_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
 
 // PollResult and PollResultValue relationships
-PollResult.hasMany(PollResultValue, { foreignKey: "poll_result_id" });
-PollResultValue.belongsTo(PollResult, { foreignKey: "poll_result_id" });
+PollResult.hasMany(PollResultValue, {
+  foreignKey: { name: "poll_result_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+PollResultValue.belongsTo(PollResult, {
+  foreignKey: { name: "poll_result_id", allowNull: false },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
 
 // Poll AllowedUsers relationships (existing allowed user system)
 Poll.belongsToMany(User, {

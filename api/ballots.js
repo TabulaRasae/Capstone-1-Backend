@@ -9,6 +9,7 @@ const {
   db,
 } = require("../database");
 const { requireAuth } = require("../auth");
+const { persistPollResult } = require("../services/pollResults");
 
     //      _______
     //     |       |
@@ -98,7 +99,11 @@ router.post("/", async (req, res) => {
     }
 
     if (poll.endAt && new Date() > new Date(poll.endAt)) {
-      await tx.rollback();
+      poll.status = "closed";
+      poll.isActive = false;
+      await poll.save({ transaction: tx });
+      await persistPollResult(pollId, tx);
+      await tx.commit();
       return res.status(400).json({ error: "Poll has ended" });
     }
 
@@ -146,6 +151,8 @@ router.post("/", async (req, res) => {
     await BallotRanking.bulkCreate(rankingRows, { transaction: tx });
 
     await tx.commit();
+
+    await persistPollResult(pollId);
 
     const result = await Ballot.findByPk(ballot.id, {
       include: [{ model: BallotRanking, order: [["rank", "ASC"]] }],

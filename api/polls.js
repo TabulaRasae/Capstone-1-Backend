@@ -3,62 +3,112 @@ const router = express.Router();
 const { authenticateJWT, requireAuth, requireAdmin } = require("../auth");
 const { Poll, PollOption, Ballot, BallotRanking, User, PollAllowedUser, PollResult, PollResultValue, PollViewPermission, PollVotePermission, db } = require("../database");
 const { checkPollViewPermission, checkPollVotePermission } = require("../services/pollPermissions");
+const { persistPollResult, getOrComputePollResult, finalizePollIfExpired } = require("../services/pollResults");
 const { Op } = require("sequelize");
 
 router.use(authenticateJWT);
 
 router.get("/", async (req, res) => {
   try {
-    const userId = req.user?.id; 
-    
-    const polls = await Poll.findAll({
-      where: {
-        [Op.or]: [
-          { status: "published" }, // Published polls are visible to everyone (subject to view permissions)
-          { 
-            status: "draft", 
-            creator_id: userId || -1 // Draft polls only visible to their creator
-          }
-        ]
-      },
-      include: [
-        {
-          model: PollOption,
-          as: "PollOptions", 
-          required: false
-        },
-        {
-          model: Ballot,
-          required: false,
-          include: [
+    const userId = req.user?.id;
+    const filter = (req.query.filter || "active").toLowerCase();
+    const now = new Date();
+
+    let whereClause;
+
+    switch (filter) {
+      case "ended":
+        whereClause = {
+          [Op.or]: [
+            { status: "closed" },
             {
-              model: BallotRanking,
-              required: false
-            }
+              status: "published",
+              [Op.or]: [
+                { isActive: false },
+                { endAt: { [Op.lte]: now } },
+              ],
+            },
           ],
-        },
-        {
-          model: User,
-          as: "creator",
-          attributes: ["id", "username", "imageUrl"],
-          required: false
-        }
-      ],
+        };
+        break;
+      case "all":
+        whereClause = {
+          [Op.or]: [
+            { status: "published" },
+            { status: "closed" },
+            { status: "draft", creator_id: userId || -1 },
+          ],
+        };
+        break;
+      case "active":
+      default:
+        whereClause = {
+          status: "published",
+          isActive: true,
+          [Op.or]: [
+            { endAt: null },
+            { endAt: { [Op.gt]: now } },
+          ],
+        };
+        break;
+    }
+
+    const pollIncludes = [
+      {
+        model: PollOption,
+        as: "PollOptions",
+        required: false,
+      },
+      {
+        model: PollResult,
+        required: false,
+        include: [
+          {
+            model: PollResultValue,
+            required: false,
+          },
+        ],
+      },
+      {
+        model: User,
+        as: "creator",
+        attributes: ["id", "username", "imageUrl"],
+        required: false,
+      },
+    ];
+
+    const polls = await Poll.findAll({
+      where: whereClause,
+      include: pollIncludes,
+      order: [[{ model: PollOption, as: "PollOptions" }, "position", "ASC"]],
     });
 
     const accessiblePolls = [];
-    
+
     for (const poll of polls) {
-      if (poll.status === "draft") {
-        if (poll.creator_id === userId) {
-          accessiblePolls.push(poll);
-        }
-      } else {
-        const canView = await checkPollViewPermission(poll, userId);
-        if (canView) {
-          accessiblePolls.push(poll);
-        }
+      await finalizePollIfExpired(poll);
+
+      if (filter === "active") {
+        const stillActive =
+          poll.status === "published" &&
+          poll.isActive &&
+          (!poll.endAt || new Date(poll.endAt) > new Date());
+        if (!stillActive) continue;
       }
+
+      const canView =
+        poll.status === "draft"
+          ? poll.creator_id === userId
+          : await checkPollViewPermission(poll, userId);
+
+      if (!canView) continue;
+
+      if ((poll.status === "published" || poll.status === "closed") && !poll.PollResult) {
+        await persistPollResult(poll.id);
+        await poll.reload({ include: pollIncludes });
+      }
+
+      accessiblePolls.push(poll);
     }
 
     res.status(200).send(accessiblePolls);
@@ -74,66 +124,76 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const userId = req.user?.id;
-    
-    const poll = await Poll.findByPk(req.params.id, {
-      include: [
-        {
-          model: PollOption,
-          as: "PollOptions", 
-          required: false,
-          order: [['position', 'ASC']]
-        },
-        {
-          model: Ballot,
-          required: false,
-          include: [
-            {
-              model: BallotRanking,
-              required: false,
-              include: [
-                {
-                  model: PollOption,
-                  required: false
-                }
-              ]
-            }
-          ],
-        },
-        {
-          model: User,
-          as: "creator",
-          attributes: ["id", "username", "imageUrl"],
-          required: false
-        }
-      ],
+
+    const pollIncludes = [
+      {
+        model: PollOption,
+        as: "PollOptions",
+        required: false,
+      },
+      {
+        model: PollResult,
+        required: false,
+        include: [
+          {
+            model: PollResultValue,
+            include: [{ model: PollOption }],
+            required: false,
+          },
+        ],
+      },
+      {
+        model: User,
+        as: "creator",
+        attributes: ["id", "username", "imageUrl"],
+        required: false,
+      },
+    ];
+
+    let poll = await Poll.findByPk(req.params.id, {
+      include: pollIncludes,
+      order: [[{ model: PollOption, as: "PollOptions" }, "position", "ASC"]],
     });
 
     if (!poll) {
       return res.status(404).json({ error: "Poll not found" });
     }
 
-    const canView = await checkPollViewPermission(poll, userId);
+    await finalizePollIfExpired(poll);
+
+    const canView =
+      poll.status === "draft"
+        ? poll.creator_id === userId
+        : await checkPollViewPermission(poll, userId);
+
     if (!canView) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: "Access denied",
         message: "You don't have permission to view this poll",
-        requiresLogin: !userId && poll.viewRestriction !== "public"
+        requiresLogin: !userId && poll.viewRestriction !== "public",
+      });
+    }
+
+    if ((poll.status === "published" || poll.status === "closed") && !poll.PollResult) {
+      await persistPollResult(poll.id);
+      poll = await Poll.findByPk(req.params.id, {
+        include: pollIncludes,
+        order: [[{ model: PollOption, as: "PollOptions" }, "position", "ASC"]],
       });
     }
 
     const canVote = await checkPollVotePermission(poll, userId);
     const pollData = poll.toJSON();
-    
-    if (!pollData.PollOptions && pollData.pollOptions) {
-      pollData.PollOptions = pollData.pollOptions;
-      delete pollData.pollOptions;
-    }
-    
+
+    pollData.pollOptions = pollData.PollOptions || [];
+    pollData.result = pollData.PollResult || null;
+    pollData.ballotCount = pollData.result?.totalBallots || 0;
+
     pollData.permissions = {
       canView: true,
-      canVote
+      canVote,
     };
-    
+
     res.status(200).json(pollData);
   } catch (error) {
     console.error("Error fetching poll by ID:", error);
@@ -225,6 +285,10 @@ router.post("/", requireAuth, async (req, res) => {
         await PollVotePermission.bulkCreate(votePermissions, { transaction });
       }
 
+      if (poll.status !== "draft") {
+        await persistPollResult(poll.id, transaction);
+      }
+
       return poll;
     });
 
@@ -268,6 +332,7 @@ router.put("/:id", requireAuth, async (req, res) => {
       customVoteUsers,
       pollOptions
     } = req.body;
+    const nextStatus = status || poll.status;
 
     console.log("Updating poll with data:", req.body);
 
@@ -276,10 +341,11 @@ router.put("/:id", requireAuth, async (req, res) => {
         title: title ? title.trim() : poll.title,
         description: description !== undefined ? (description ? description.trim() : null) : poll.description,
         allowAnonymous: allowAnonymous !== undefined ? allowAnonymous : poll.allowAnonymous,
-        status: status || poll.status,
+        status: nextStatus,
         endAt: endAt !== undefined ? (endAt ? new Date(endAt) : null) : poll.endAt,
         viewRestriction: viewRestriction || poll.viewRestriction,
         voteRestriction: voteRestriction || poll.voteRestriction,
+        isActive: nextStatus === "closed" ? false : poll.isActive,
       }, { transaction });
 
       if (pollOptions && Array.isArray(pollOptions)) {
@@ -339,6 +405,10 @@ router.put("/:id", requireAuth, async (req, res) => {
         });
       }
 
+      if (nextStatus !== "draft") {
+        await persistPollResult(pollId, transaction);
+      }
+
       return poll;
     });
 
@@ -355,6 +425,7 @@ router.put("/:id", requireAuth, async (req, res) => {
         }
       ],
     });
+    await finalizePollIfExpired(updatedPoll);
 
     res.status(200).json({
       message: `Poll ${status === 'draft' ? 'saved as draft' : 'updated'} successfully`,
@@ -393,27 +464,24 @@ router.get("/:pollId/results", async (req, res) => {
       include: [
         {
           model: PollOption,
-          include: [
-            {
-              model: PollResultValue,
-              include: [
-                {
-                  model: PollResult,
-                  where: { poll_id: pollId },
-                  required: false,
-                },
-              ],
-            },
-          ],
+          as: "PollOptions",
+          required: false,
         },
       ],
+      order: [[{ model: PollOption, as: "PollOptions" }, "position", "ASC"]],
     });
 
     if (!poll) {
       return res.status(404).json({ error: "Poll not found" });
     }
 
-    res.status(200).send(poll);
+    const result = await getOrComputePollResult(pollId);
+
+    res.status(200).json({
+      pollId: poll.id,
+      pollOptions: poll.PollOptions || [],
+      result,
+    });
   } catch (error) {
     console.error("Error fetching poll results:", error);
     res.status(500).json({ error: "Failed to fetch poll results" });
@@ -443,6 +511,10 @@ router.post("/:pollId/vote", requireAuth, async (req, res) => {
     }
 
     if (poll.endAt && new Date() > new Date(poll.endAt)) {
+      poll.status = "closed";
+      poll.isActive = false;
+      await poll.save();
+      await persistPollResult(pollId);
       return res.status(400).json({ error: "Poll has ended" });
     }
 
@@ -470,6 +542,8 @@ router.post("/:pollId/vote", requireAuth, async (req, res) => {
 
       await BallotRanking.bulkCreate(ballotRankings);
     }
+
+    await persistPollResult(pollId);
 
     res.status(201).json({ message: "Vote recorded successfully", ballot_id: ballot.id });
   } catch (error) {

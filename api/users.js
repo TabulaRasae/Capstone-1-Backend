@@ -2,6 +2,10 @@ const express = require("express");
 const router = express.Router();
 const { User, Poll, Ballot, UserFollow } = require("../database");
 const { authenticateJWT } = require("../auth");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
 router.post("/signup", async (req, res) => {
   try {

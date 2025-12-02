@@ -167,7 +167,7 @@ const computeInstantRunoff = (poll) => {
   });
 
   return {
-    totalBallots: ballots.length,
+    totalBallots,
     totalRounds,
     winnerId,
     isDraw: false,

@@ -174,7 +174,9 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    if ((poll.status === "published" || poll.status === "closed") && !poll.PollResult) {
+    const liveBallotCount = await Ballot.count({ where: { poll_id: poll.id } });
+
+    if ((poll.status === "published" || poll.status === "closed") && (!poll.PollResult || poll.PollResult.totalBallots !== liveBallotCount)) {
       await persistPollResult(poll.id);
       poll = await Poll.findByPk(req.params.id, {
         include: pollIncludes,
@@ -187,7 +189,7 @@ router.get("/:id", async (req, res) => {
 
     pollData.pollOptions = pollData.PollOptions || [];
     pollData.result = pollData.PollResult || null;
-    pollData.ballotCount = pollData.result?.totalBallots || 0;
+    pollData.ballotCount = pollData.result?.totalBallots || liveBallotCount || 0;
 
     pollData.permissions = {
       canView: true,
@@ -475,7 +477,7 @@ router.get("/:pollId/results", async (req, res) => {
       return res.status(404).json({ error: "Poll not found" });
     }
 
-    const result = await getOrComputePollResult(pollId);
+    const result = await persistPollResult(pollId);
 
     res.status(200).json({
       pollId: poll.id,
